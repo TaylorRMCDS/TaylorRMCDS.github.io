@@ -255,6 +255,27 @@
     }
     .btn-delete-field:hover { background: #fee2e2; }
 
+    /* ── Edge Ports ── */
+    .edge-port {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      background: var(--color-btn);
+      border: 2px solid #fff;
+      border-radius: 50%;
+      opacity: 0;
+      transition: opacity 0.15s, transform 0.15s;
+      cursor: crosshair;
+      z-index: 20;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+    .table-card:hover .edge-port { opacity: 1; }
+    .edge-port:hover { background: var(--color-card-connect); transform: scale(1.25); }
+    .edge-port[data-side="top"]    { top: -7px;    left: calc(50% - 7px); }
+    .edge-port[data-side="right"]  { right: -7px;  top: calc(50% - 7px); }
+    .edge-port[data-side="bottom"] { bottom: -7px; left: calc(50% - 7px); }
+    .edge-port[data-side="left"]   { left: -7px;   top: calc(50% - 7px); }
+
     /* ── Relationship Type Modal ── */
     #rel-modal-overlay {
       display: none;
@@ -531,6 +552,95 @@
   }
 
   /* ─────────────────────────────────────────────
+     Port Drag-to-Connect
+  ───────────────────────────────────────────── */
+  let portDragState = null;
+  let tempConnLine  = null;
+
+  function getPortCenter(tableId, side) {
+    const r = getCardRect(tableId);
+    if (!r) return null;
+    switch (side) {
+      case 'top':    return { x: r.left + r.width / 2, y: r.top };
+      case 'right':  return { x: r.left + r.width,      y: r.top + r.height / 2 };
+      case 'bottom': return { x: r.left + r.width / 2, y: r.top + r.height };
+      case 'left':   return { x: r.left,                y: r.top + r.height / 2 };
+      default:       return null;
+    }
+  }
+
+  function startPortConnect(tableId, side, e) {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const coords = getPortCenter(tableId, side);
+    if (!coords) return;
+
+    // Highlight source card and show crosshair cursor
+    document.querySelectorAll('.table-card').forEach(c =>
+      c.classList.toggle('connect-source', c.dataset.id === tableId)
+    );
+    canvas.classList.add('connect-mode');
+
+    portDragState = { sourceId: tableId, moved: false };
+
+    // Temporary dashed line showing the in-progress connection
+    tempConnLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    tempConnLine.setAttribute('x1', coords.x);
+    tempConnLine.setAttribute('y1', coords.y);
+    tempConnLine.setAttribute('x2', coords.x);
+    tempConnLine.setAttribute('y2', coords.y);
+    tempConnLine.setAttribute('stroke', 'var(--color-connector)');
+    tempConnLine.setAttribute('stroke-width', '2');
+    tempConnLine.setAttribute('stroke-dasharray', '6 3');
+    tempConnLine.setAttribute('marker-end', 'url(#arrowhead)');
+    tempConnLine.style.pointerEvents = 'none';
+    svgOverlay.appendChild(tempConnLine);
+
+    document.addEventListener('mousemove', onPortDragMove);
+    document.addEventListener('mouseup',   onPortDragEnd);
+  }
+
+  function onPortDragMove(e) {
+    if (!portDragState) return;
+    const r = canvas.getBoundingClientRect();
+    tempConnLine.setAttribute('x2', e.clientX - r.left);
+    tempConnLine.setAttribute('y2', e.clientY - r.top);
+    portDragState.moved = true;
+  }
+
+  function onPortDragEnd(e) {
+    document.removeEventListener('mousemove', onPortDragMove);
+    document.removeEventListener('mouseup',   onPortDragEnd);
+    if (!portDragState) return;
+
+    const { sourceId, moved } = portDragState;
+
+    // Clean up temp line and visual cues
+    if (tempConnLine) { tempConnLine.remove(); tempConnLine = null; }
+    document.querySelectorAll('.table-card').forEach(c => c.classList.remove('connect-source'));
+    canvas.classList.remove('connect-mode');
+    portDragState = null;
+
+    if (!moved) {
+      // Pure click on port → enter click-to-connect mode
+      enterConnectMode(sourceId);
+      return;
+    }
+
+    // Drag: resolve the card under the cursor (hide SVG overlay briefly so it doesn't intercept)
+    svgOverlay.style.visibility = 'hidden';
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    svgOverlay.style.visibility = '';
+
+    const targetCard = el ? el.closest('.table-card') : null;
+    const targetId   = targetCard ? targetCard.dataset.id : null;
+
+    if (!targetId || targetId === sourceId) return;
+    openRelModal(sourceId, targetId);
+  }
+
+  /* ─────────────────────────────────────────────
      Selected Connector State
   ───────────────────────────────────────────── */
   let selectedRelId = null;
@@ -777,11 +887,6 @@
     addFieldBtn.textContent = '+ Field';
     addFieldBtn.setAttribute('aria-label', 'Add field');
 
-    const connectBtn = document.createElement('button');
-    connectBtn.className = 'btn-connect';
-    connectBtn.textContent = '⤢ Connect';
-    connectBtn.setAttribute('aria-label', 'Connect to another table');
-
     const deleteTableBtn = document.createElement('button');
     deleteTableBtn.className = 'btn-delete-table';
     deleteTableBtn.textContent = '✕';
@@ -789,7 +894,6 @@
     deleteTableBtn.title = 'Delete table';
 
     actions.appendChild(addFieldBtn);
-    actions.appendChild(connectBtn);
     actions.appendChild(deleteTableBtn);
     header.appendChild(nameSpan);
     header.appendChild(actions);
@@ -844,17 +948,6 @@
       const row = buildFieldRow(tableData.id, fieldDef);
       fieldList.appendChild(row);
       row.querySelector('.field-name').focus();
-    });
-
-    /* ── Connect ── */
-    connectBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (connectMode && connectSourceId === tableData.id) {
-        exitConnectMode();
-        return;
-      }
-      exitConnectMode();
-      enterConnectMode(tableData.id);
     });
 
     /* ── Delete Table ── */
@@ -919,6 +1012,16 @@
       const pendingTargetId = targetId;
       exitConnectMode();
       openRelModal(pendingSourceId, pendingTargetId);
+    });
+
+    /* ── Edge Ports ── */
+    ['top', 'right', 'bottom', 'left'].forEach(side => {
+      const port = document.createElement('div');
+      port.className = 'edge-port';
+      port.dataset.side = side;
+      port.title = 'Drag or click to connect';
+      port.addEventListener('mousedown', (e) => startPortConnect(tableData.id, side, e));
+      card.appendChild(port);
     });
 
     canvas.appendChild(card);
@@ -1016,10 +1119,32 @@
   });
 
   /* ─────────────────────────────────────────────
-     Deselect connector on canvas click
+     Deselect connector / cancel connect mode on canvas click
   ───────────────────────────────────────────── */
-  canvas.addEventListener('click', () => {
+  canvas.addEventListener('click', (e) => {
     deselectConnector();
+    if (!e.target.closest('.table-card')) exitConnectMode();
+  });
+
+  /* ─────────────────────────────────────────────
+     Double-click canvas to create a new table
+  ───────────────────────────────────────────── */
+  canvas.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.table-card')) return;
+    if (connectMode || portDragState) return;
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const tableData = {
+      id: uid(),
+      name: 'NewTable',
+      // Offset so the card is roughly centred on the cursor
+      x: Math.max(0, x - 110),  // ~half of min-width (220px)
+      y: Math.max(0, y - 20),   // ~half of header height
+      fields: []
+    };
+    state.tables.push(tableData);
+    createTableCard(tableData);
   });
 
   /* ─────────────────────────────────────────────
