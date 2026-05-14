@@ -433,13 +433,21 @@
     const typeSelect = document.createElement('select');
     typeSelect.className = 'field-type';
     typeSelect.setAttribute('aria-label', 'Field type');
-    ['INT','VARCHAR(255)','TEXT','BOOLEAN','DATE','DATETIME','FLOAT','DECIMAL(10,2)','UUID'].forEach(t => {
+    ['INT','VARCHAR(255)','TEXT','BOOLEAN','DATE','DATETIME','FLOAT','DECIMAL(10,2)','UUID','ENUM'].forEach(t => {
       const opt = document.createElement('option');
       opt.value = t;
       opt.textContent = t;
       if (t === fieldDef.type) opt.selected = true;
       typeSelect.appendChild(opt);
     });
+
+    const enumValuesInput = document.createElement('input');
+    enumValuesInput.type = 'text';
+    enumValuesInput.className = 'field-enum-values';
+    enumValuesInput.placeholder = 'val1,val2,val3';
+    enumValuesInput.setAttribute('aria-label', 'ENUM values (comma-separated)');
+    enumValuesInput.value = fieldDef.enumValues || '';
+    enumValuesInput.style.display = fieldDef.type === 'ENUM' ? '' : 'none';
 
     const delBtn = document.createElement('button');
     delBtn.className = 'btn-delete-field';
@@ -454,6 +462,11 @@
 
     typeSelect.addEventListener('change', () => {
       fieldDef.type = typeSelect.value;
+      enumValuesInput.style.display = fieldDef.type === 'ENUM' ? '' : 'none';
+    });
+
+    enumValuesInput.addEventListener('input', () => {
+      fieldDef.enumValues = enumValuesInput.value;
     });
 
     delBtn.addEventListener('click', () => {
@@ -471,7 +484,8 @@
         sourceTableId: tableId,
         fieldId: fieldDef.id,
         name: fieldDef.name,
-        type: fieldDef.type
+        type: fieldDef.type,
+        enumValues: fieldDef.enumValues || ''
       };
       e.dataTransfer.setData('application/table-field', JSON.stringify(payload));
       e.dataTransfer.effectAllowed = 'move';
@@ -484,6 +498,7 @@
 
     li.appendChild(nameInput);
     li.appendChild(typeSelect);
+    li.appendChild(enumValuesInput);
     li.appendChild(delBtn);
     return li;
   }
@@ -588,7 +603,8 @@
       const movedField = {
         id: sourceField.id,
         name: sourceField.name,
-        type: sourceField.type
+        type: sourceField.type,
+        enumValues: sourceField.enumValues || ''
       };
       addFieldToModel(tableData.id, movedField, insertIndex);
 
@@ -651,7 +667,8 @@
         const movedField = {
           id: sourceField.id,
           name: sourceField.name,
-          type: sourceField.type
+          type: sourceField.type,
+          enumValues: sourceField.enumValues || ''
         };
         addFieldToModel(tableData.id, movedField);
         fieldList.appendChild(buildFieldRow(tableData.id, movedField));
@@ -1004,7 +1021,17 @@
 
       table.fields.forEach(f => {
         const fName = escapeBacktick(f.name.trim());
-        colLines.push(`  \`${fName}\` ${f.type} NOT NULL`);
+        let colType = f.type;
+        if (f.type === 'ENUM') {
+          const vals = (f.enumValues || '')
+            .split(',')
+            .map(v => v.trim())
+            .filter(Boolean)
+            .map(v => `'${v.replace(/'/g, "''")}'`)
+            .join(', ');
+          colType = vals ? `ENUM(${vals})` : `ENUM('')`;
+        }
+        colLines.push(`  \`${fName}\` ${colType} NOT NULL`);
       });
 
       // Foreign keys for one_to_many / many_to_one where this table is the "many" side
