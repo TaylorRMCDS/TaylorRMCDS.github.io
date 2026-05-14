@@ -256,6 +256,18 @@
 
     .field-type:focus { outline: 2px solid var(--color-btn); outline-offset: -1px; }
 
+    .field-enum-values {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid var(--color-field-border);
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 0.78rem;
+      background: #fff;
+    }
+
+    .field-enum-values:focus { outline: 2px solid var(--color-btn); outline-offset: -1px; }
+
     .btn-delete-field {
       background: none;
       border: none;
