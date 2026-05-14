@@ -1025,11 +1025,13 @@
         if (f.type === 'ENUM') {
           const vals = (f.enumValues || '')
             .split(',')
-            .map(v => v.trim())
-            .filter(Boolean)
-            .map(v => `'${v.replace(/'/g, "''")}'`)
-            .join(', ');
-          colType = vals ? `ENUM(${vals})` : `ENUM('')`;
+            .map(v => v.trim().replace(/[\r\n\0\\]/g, '').replace(/'/g, "''"))
+            .filter(Boolean);
+          if (!vals.length) {
+            showError(`ENUM field "${fName}" has no values — skipped in SQL output.`);
+            return;
+          }
+          colType = `ENUM(${vals.map(v => `'${v}'`).join(', ')})`;
         }
         colLines.push(`  \`${fName}\` ${colType} NOT NULL`);
       });
