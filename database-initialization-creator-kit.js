@@ -20,9 +20,7 @@
   const sqlOutput         = document.getElementById('sql-output');
   const connectorDeleteBtn= document.getElementById('connector-delete-btn');
   const errorToast        = document.getElementById('error-toast');
-  const singleFieldInput  = document.getElementById('single-field-input');
   const bulkFieldInput    = document.getElementById('bulk-field-input');
-  const addPaneFieldBtn   = document.getElementById('btn-add-pane-field');
   const addBulkFieldsBtn  = document.getElementById('btn-add-bulk-fields');
   const paneFieldListEl   = document.getElementById('pane-field-list');
 
@@ -391,9 +389,14 @@
   /* 
      Field Management
    */
-  function addFieldToModel(tableId, fieldDef) {
+  function addFieldToModel(tableId, fieldDef, insertIndex = null) {
     const table = state.tables.find(t => t.id === tableId);
     if (!table) return;
+    if (typeof insertIndex === 'number' && Number.isFinite(insertIndex)) {
+      const clamped = Math.max(0, Math.min(insertIndex, table.fields.length));
+      table.fields.splice(clamped, 0, fieldDef);
+      return;
+    }
     table.fields.push(fieldDef);
   }
 
@@ -401,6 +404,17 @@
     const table = state.tables.find(t => t.id === tableId);
     if (!table) return;
     table.fields = table.fields.filter(f => f.id !== fieldId);
+  }
+
+  function getDropInsertIndex(fieldListEl, clientY, skipFieldId = null) {
+    const rows = [...fieldListEl.querySelectorAll('.field-row')]
+      .filter(row => row.dataset.fieldId !== skipFieldId);
+
+    for (let i = 0; i < rows.length; i++) {
+      const rect = rows[i].getBoundingClientRect();
+      if (clientY < rect.top + rect.height / 2) return i;
+    }
+    return rows.length;
   }
 
   function buildFieldRow(tableId, fieldDef) {
@@ -513,6 +527,80 @@
     // Render existing fields (e.g. when reconstructing)
     tableData.fields.forEach(f => fieldList.appendChild(buildFieldRow(tableData.id, f)));
 
+    fieldList.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer.types.includes('application/table-field')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+    });
+
+    fieldList.addEventListener('drop', (e) => {
+      const tableFieldPayload = e.dataTransfer.getData('application/table-field');
+      if (!tableFieldPayload) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      card.classList.remove('drop-target');
+
+      let parsed;
+      try {
+        parsed = JSON.parse(tableFieldPayload);
+      } catch {
+        return;
+      }
+
+      if (!parsed || !parsed.sourceTableId || !parsed.fieldId) return;
+
+      // Reorder within the same table
+      if (parsed.sourceTableId === tableData.id) {
+        const sourceIndex = tableData.fields.findIndex(f => f.id === parsed.fieldId);
+        if (sourceIndex === -1) return;
+
+        const targetIndex = getDropInsertIndex(fieldList, e.clientY, parsed.fieldId);
+        const [movedField] = tableData.fields.splice(sourceIndex, 1);
+        tableData.fields.splice(targetIndex, 0, movedField);
+
+        const draggedRow = fieldList.querySelector(`.field-row[data-field-id="${parsed.fieldId}"]`);
+        if (!draggedRow) return;
+
+        const rows = [...fieldList.querySelectorAll('.field-row')]
+          .filter(row => row.dataset.fieldId !== parsed.fieldId);
+        if (targetIndex >= rows.length) {
+          fieldList.appendChild(draggedRow);
+        } else {
+          fieldList.insertBefore(draggedRow, rows[targetIndex]);
+        }
+        return;
+      }
+
+      const sourceTable = state.tables.find(t => t.id === parsed.sourceTableId);
+      if (!sourceTable) return;
+      const sourceField = sourceTable.fields.find(f => f.id === parsed.fieldId);
+      if (!sourceField) return;
+
+      const insertIndex = getDropInsertIndex(fieldList, e.clientY);
+      removeFieldFromModel(parsed.sourceTableId, parsed.fieldId);
+      const sourceRow = document.querySelector(
+        `.table-card[data-id="${parsed.sourceTableId}"] .field-row[data-field-id="${parsed.fieldId}"]`
+      );
+      if (sourceRow) sourceRow.remove();
+
+      const movedField = {
+        id: sourceField.id,
+        name: sourceField.name,
+        type: sourceField.type
+      };
+      addFieldToModel(tableData.id, movedField, insertIndex);
+
+      const newRow = buildFieldRow(tableData.id, movedField);
+      const rows = [...fieldList.querySelectorAll('.field-row')];
+      if (insertIndex >= rows.length) {
+        fieldList.appendChild(newRow);
+      } else {
+        fieldList.insertBefore(newRow, rows[insertIndex]);
+      }
+    });
+
     card.appendChild(header);
     card.appendChild(fieldList);
 
@@ -561,7 +649,7 @@
         if (sourceRow) sourceRow.remove();
 
         const movedField = {
-          id: uid(),
+          id: sourceField.id,
           name: sourceField.name,
           type: sourceField.type
         };
@@ -768,19 +856,6 @@
     sqlModalOverlay.classList.remove('active');
   });
 
-  addPaneFieldBtn.addEventListener('click', () => {
-    addPaneField(singleFieldInput.value);
-    singleFieldInput.value = '';
-    singleFieldInput.focus();
-  });
-
-  singleFieldInput.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    addPaneField(singleFieldInput.value);
-    singleFieldInput.value = '';
-  });
-
   addBulkFieldsBtn.addEventListener('click', () => {
     addPaneFieldsFromText(bulkFieldInput.value);
     bulkFieldInput.value = '';
@@ -975,4 +1050,3 @@
   }
 
 })();
-
